@@ -6,13 +6,38 @@ Serwer Node.js z TypeScript do rozpoznawania wagi z wyświetlaczy alfanumeryczny
 
 - Upload zdjęć wyświetlaczy wagi
 - Automatyczne rozpoznawanie liczb za pomocą Tesseract.js OCR
-- Zapisywanie przesłanych obrazów w katalogu `uploads`
+- Zapisywanie przesłanych obrazów w katalogu `uploads` z timestampem w nazwie
 - REST API z obsługą CORS
+- **Generyczne metadane** - akceptuje dowolne pola w request
+- **Serwowanie obrazów** - endpoint do podglądu uploadowanych zdjęć
+- **Webhook notifications** - opcjonalne powiadomienia POST z wynikami OCR i metadanymi
 
 ## Instalacja
 
 ```bash
 npm install
+```
+
+## Konfiguracja
+
+Skopiuj plik `.env.example` do `.env` i dostosuj wartości:
+
+```bash
+cp .env.example .env
+```
+
+### Zmienne środowiskowe
+
+```bash
+# Port serwera (domyślnie 3000)
+PORT=3000
+
+# Publiczny URL serwera (dla linków do obrazów w webhook)
+PUBLIC_URL=http://localhost:3000
+
+# Webhook - opcjonalne powiadomienia POST
+WEBHOOK_URL=https://your-webhook-endpoint.com/webhook
+WEBHOOK_API_KEY=your-secret-api-key
 ```
 
 ## Uruchomienie
@@ -40,40 +65,94 @@ Informacje o serwerze i dostępnych endpointach
 Health check - sprawdzenie statusu serwera
 
 ### `POST /api/upload`
-Upload zdjęcia wyświetlacza wagi z opcjonalnymi metadanymi
+Upload zdjęcia wyświetlacza wagi z dowolnymi metadanymi
 
 **Request:**
 - Method: POST
 - Content-Type: multipart/form-data
 - Body:
   - `image` (file, **required**) - plik ze zdjęciem (jpg, png, gif, bmp, webp)
-  - `timestamp` (string, optional) - czas zrobienia zdjęcia (ISO 8601)
-  - `userId` (string, optional) - ID użytkownika
-  - `location` (string, optional) - lokalizacja pomiaru
-  - `deviceId` (string, optional) - ID urządzenia
-  - `notes` (string, optional) - dodatkowe notatki
-  - ...dowolne inne pola (optional) - wszystkie dodatkowe pola zostaną zapisane w `metadata`
+  - **Dowolne inne pola** - wszystkie dodatkowe pola zostaną zapisane w `metadata`
+  - Przykłady: `userId`, `timestamp`, `location`, `deviceId`, `orderNumber`, `notes`, etc.
 
 **Response:**
 ```json
 {
   "success": true,
   "data": {
-    "weight": "125.5",
+    "weight": "1626",
     "confidence": 0.85,
-    "rawText": "125.5 kg",
-    "filename": "weight-1234567890-123456789.jpg",
-    "uploadedAt": "2024-01-15T10:30:00.000Z",
+    "rawText": "1626",
+    "filename": "weight-1731348577250-123456789.jpg",
+    "imageUrl": "http://localhost:3000/uploads/weight-1731348577250-123456789.jpg",
+    "receivedAt": "2025-11-11T17:49:37.250Z",
     "metadata": {
-      "timestamp": "2024-01-15T10:29:55.000Z",
       "userId": "user123",
       "location": "Warehouse A",
       "deviceId": "scale-01",
+      "orderNumber": "ORD-001",
       "notes": "Morning weight check"
     }
   }
 }
 ```
+
+**Uwaga:** Nazwa pliku zawiera timestamp (`weight-TIMESTAMP-RANDOM.ext`), więc można wyekstrahować czas z nazwy.
+
+### `GET /uploads/:filename`
+Pobierz uploadowane zdjęcie
+
+**Request:**
+- Method: GET
+- URL: `/uploads/{filename}`
+
+**Response:**
+- Plik obrazu (JPEG, PNG, GIF, BMP, WEBP)
+
+**Przykład:**
+```bash
+curl http://localhost:3000/uploads/weight-1731348577250-123456789.jpg --output image.jpg
+```
+
+## Webhook Notifications
+
+Jeśli skonfigurujesz `WEBHOOK_URL` w `.env`, serwer automatycznie wyśle POST request z wynikami po przetworzeniu każdego zdjęcia.
+
+### Webhook Request
+
+**Headers:**
+```
+Content-Type: application/json
+x-api-key: YOUR_WEBHOOK_API_KEY  (jeśli skonfigurowany)
+```
+
+**Body:**
+```json
+{
+  "weight": "1626",
+  "confidence": 0.85,
+  "rawText": "1626",
+  "filename": "weight-1731348577250-123456789.jpg",
+  "imageUrl": "http://localhost:3000/uploads/weight-1731348577250-123456789.jpg",
+  "receivedAt": "2025-11-11T17:49:37.250Z",
+  "metadata": {
+    "userId": "user123",
+    "location": "Warehouse A",
+    "orderNumber": "ORD-001"
+  },
+  "webhookSentAt": "2025-11-11T17:49:38.100Z"
+}
+```
+
+**Zawiera:**
+- `weight` - rozpoznana waga (wartość OCR)
+- `confidence` - pewność rozpoznania (0-1)
+- `rawText` - surowy tekst z OCR
+- `filename` - nazwa zapisanego pliku
+- `imageUrl` - publiczny URL do podejrzenia zdjęcia
+- `receivedAt` - czas otrzymania zdjęcia na serwerze (ISO 8601)
+- `metadata` - wszystkie dodatkowe pola wysłane w request
+- `webhookSentAt` - czas wysłania webhooka (ISO 8601)
 
 ## Przykład użycia
 
@@ -195,24 +274,33 @@ weight-ocr-server/
 - **Multer** - middleware do obsługi upload plików
 - **Tesseract.js** - biblioteka OCR do rozpoznawania tekstu
 - **CORS** - obsługa cross-origin requests
-
-## Konfiguracja
-
-Domyślny port: `3000` (można zmienić przez zmienną środowiskową `PORT`)
-
-```bash
-PORT=8080 npm run dev
-```
+- **dotenv** - zarządzanie zmiennymi środowiskowymi
 
 ## Uwagi
 
+### Upload i OCR
 - Maksymalny rozmiar pliku: 10MB
 - Obsługiwane formaty: JPEG, PNG, GIF, BMP, WEBP
-- OCR skonfigurowany do rozpoznawania cyfr i znaków: `0123456789.,kg`
-- Zdjęcia zapisywane są w katalogu `uploads/` z unikalną nazwą
-- **Metadane są w pełni opcjonalne** - można wysłać tylko zdjęcie lub dodać dowolne pola
-- Wszystkie dodatkowe pola z `multipart/form-data` są automatycznie zapisywane w `metadata`
-- Nie trzeba używać query params - wszystko idzie w jednym request jako form data
+- OCR skonfigurowany do rozpoznawania cyfr: `0123456789.,kg`
+- OCR automatycznie wybiera **najdłuższą liczbę** (dla "1\n1626" zwróci "1626")
+
+### Metadane
+- **Pełna elastyczność** - serwer akceptuje dowolne pola w `multipart/form-data`
+- Nie ma predefiniowanych pól - wysyłaj co potrzebujesz
+- Wszystkie pola są automatycznie przekazywane w `metadata` response i webhook
+- Nie trzeba używać query params - wszystko w jednym request
+
+### Pliki i timestampy
+- Nazwa pliku: `weight-TIMESTAMP-RANDOM.ext`
+- Timestamp w nazwie = czas otrzymania na serwerze (Unix milliseconds)
+- `receivedAt` w response = ISO 8601 format
+- Obrazy dostępne przez `GET /uploads/:filename`
+
+### Webhook
+- Opcjonalny - konfiguruj przez `.env`
+- Wysyłany asynchronicznie (nie blokuje response)
+- Zawiera wszystkie dane: OCR, metadane, imageUrl, timestampy
+- Obsługuje autentykację przez `x-api-key` header
 
 ## Licencja
 

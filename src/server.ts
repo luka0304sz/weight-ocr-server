@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import express, { Request, Response } from 'express';
 import multer from 'multer';
 import path from 'path';
@@ -7,6 +8,9 @@ import { recognizeWeight } from './ocrService';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const PUBLIC_URL = process.env.PUBLIC_URL || `http://localhost:${PORT}`;
+const WEBHOOK_URL = process.env.WEBHOOK_URL;
+const WEBHOOK_API_KEY = process.env.WEBHOOK_API_KEY;
 
 // Middleware
 app.use(cors());
@@ -19,14 +23,47 @@ if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
 }
 
+// Webhook notification function
+async function sendWebhook(data: any): Promise<void> {
+  if (!WEBHOOK_URL) {
+    return; // Webhook not configured
+  }
+
+  try {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+
+    if (WEBHOOK_API_KEY) {
+      headers['x-api-key'] = WEBHOOK_API_KEY;
+    }
+
+    const response = await fetch(WEBHOOK_URL, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(data),
+    });
+
+    if (!response.ok) {
+      console.error(`Webhook failed: ${response.status} ${response.statusText}`);
+    } else {
+      console.log('Webhook sent successfully');
+    }
+  } catch (error) {
+    console.error('Webhook error:', error);
+  }
+}
+
 // Configure multer for file uploads
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     cb(null, uploadsDir);
   },
   filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
-    cb(null, `weight-${uniqueSuffix}${path.extname(file.originalname)}`);
+    // Include timestamp in filename: weight-TIMESTAMP-RANDOM.ext
+    const timestamp = Date.now();
+    const random = Math.round(Math.random() * 1e9);
+    cb(null, `weight-${timestamp}-${random}${path.extname(file.originalname)}`);
   },
 });
 
@@ -73,36 +110,42 @@ app.post('/api/upload', upload.single('image'), async (req: Request, res: Respon
       });
     }
 
+    const receivedAt = new Date().toISOString();
     console.log(`Processing uploaded file: ${req.file.filename}`);
 
-    // Extract additional metadata from request body
-    const metadata = {
-      timestamp: req.body.timestamp || null,
-      userId: req.body.userId || null,
-      location: req.body.location || null,
-      deviceId: req.body.deviceId || null,
-      notes: req.body.notes || null,
-      // Any other custom fields the client sends
-      ...Object.keys(req.body)
-        .filter(key => !['timestamp', 'userId', 'location', 'deviceId', 'notes'].includes(key))
-        .reduce((acc, key) => ({ ...acc, [key]: req.body[key] }), {}),
-    };
+    // Extract all metadata generically - accept any fields from request body
+    const metadata = { ...req.body };
 
     console.log('Received metadata:', metadata);
 
     // Perform OCR on the uploaded image
     const result = await recognizeWeight(req.file.path);
 
+    // Generate public URL for the image
+    const imageUrl = `${PUBLIC_URL}/uploads/${req.file.filename}`;
+
+    // Prepare response data
+    const responseData = {
+      weight: result.weight,
+      confidence: result.confidence,
+      rawText: result.rawText,
+      filename: req.file.filename,
+      imageUrl,
+      receivedAt,
+      metadata,
+    };
+
+    // Send webhook notification if configured
+    if (WEBHOOK_URL) {
+      sendWebhook({
+        ...responseData,
+        webhookSentAt: new Date().toISOString(),
+      }).catch(err => console.error('Webhook failed:', err));
+    }
+
     res.json({
       success: true,
-      data: {
-        weight: result.weight,
-        confidence: result.confidence,
-        rawText: result.rawText,
-        filename: req.file.filename,
-        uploadedAt: new Date().toISOString(),
-        metadata, // Include all metadata in response
-      },
+      data: responseData,
     });
   } catch (error) {
     console.error('Error processing image:', error);
@@ -112,6 +155,31 @@ app.post('/api/upload', upload.single('image'), async (req: Request, res: Respon
       message: error instanceof Error ? error.message : 'Unknown error',
     });
   }
+});
+
+// Serve uploaded images
+app.get('/uploads/:filename', (req: Request, res: Response) => {
+  const filename = req.params.filename;
+  const filepath = path.join(uploadsDir, filename);
+
+  // Security: Prevent directory traversal
+  if (!filepath.startsWith(uploadsDir)) {
+    return res.status(403).json({
+      success: false,
+      error: 'Access denied',
+    });
+  }
+
+  // Check if file exists
+  if (!fs.existsSync(filepath)) {
+    return res.status(404).json({
+      success: false,
+      error: 'Image not found',
+    });
+  }
+
+  // Send file
+  res.sendFile(filepath);
 });
 
 // Error handling middleware
@@ -129,4 +197,13 @@ app.listen(PORT, () => {
   console.log(`🚀 Weight OCR Server running on port ${PORT}`);
   console.log(`📁 Uploads directory: ${uploadsDir}`);
   console.log(`🔗 API endpoint: http://localhost:${PORT}/api/upload`);
+  console.log(`🖼️  Image serving: ${PUBLIC_URL}/uploads/:filename`);
+  if (WEBHOOK_URL) {
+    console.log(`🔔 Webhook enabled: ${WEBHOOK_URL}`);
+    if (WEBHOOK_API_KEY) {
+      console.log(`🔑 Webhook API key: configured`);
+    }
+  } else {
+    console.log(`🔕 Webhook: not configured`);
+  }
 });
