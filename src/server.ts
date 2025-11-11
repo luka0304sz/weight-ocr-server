@@ -75,6 +75,21 @@ app.post('/api/upload', upload.single('image'), async (req: Request, res: Respon
 
     console.log(`Processing uploaded file: ${req.file.filename}`);
 
+    // Extract additional metadata from request body
+    const metadata = {
+      timestamp: req.body.timestamp || null,
+      userId: req.body.userId || null,
+      location: req.body.location || null,
+      deviceId: req.body.deviceId || null,
+      notes: req.body.notes || null,
+      // Any other custom fields the client sends
+      ...Object.keys(req.body)
+        .filter(key => !['timestamp', 'userId', 'location', 'deviceId', 'notes'].includes(key))
+        .reduce((acc, key) => ({ ...acc, [key]: req.body[key] }), {}),
+    };
+
+    console.log('Received metadata:', metadata);
+
     // Perform OCR on the uploaded image
     const result = await recognizeWeight(req.file.path);
 
@@ -86,6 +101,7 @@ app.post('/api/upload', upload.single('image'), async (req: Request, res: Respon
         rawText: result.rawText,
         filename: req.file.filename,
         uploadedAt: new Date().toISOString(),
+        metadata, // Include all metadata in response
       },
     });
   } catch (error) {
