@@ -11,33 +11,32 @@ export interface WeightRecognitionResult {
  * Looks for numeric patterns that might represent weight
  */
 function extractWeightFromText(text: string): { value: string; confidence: number } {
-  // Remove whitespace and normalize
+  // Remove extra whitespace and normalize
   const normalized = text.replace(/\s+/g, ' ').trim();
 
-  // Try to find numeric patterns (including decimals)
-  // Patterns: "123.45", "123,45", "123", etc.
-  const patterns = [
-    /(\d+[.,]\d+)/g,  // Decimal numbers
-    /(\d+)/g,         // Whole numbers
-  ];
+  // First, try to find decimal numbers (highest priority)
+  const decimalPattern = /(\d+[.,]\d+)/g;
+  const decimalMatches = normalized.match(decimalPattern);
 
-  const matches: string[] = [];
-  for (const pattern of patterns) {
-    const found = normalized.match(pattern);
-    if (found) {
-      matches.push(...found);
-    }
+  if (decimalMatches && decimalMatches.length > 0) {
+    // If there are decimal numbers, pick the longest one
+    const longest = decimalMatches.reduce((a, b) => a.length >= b.length ? a : b);
+    return { value: longest.replace(',', '.'), confidence: 0.95 };
   }
 
-  if (matches.length === 0) {
+  // If no decimals, find all whole numbers
+  const wholePattern = /\d+/g;
+  const wholeMatches = normalized.match(wholePattern);
+
+  if (!wholeMatches || wholeMatches.length === 0) {
     return { value: normalized, confidence: 0.5 };
   }
 
-  // Take the first significant number found
-  // Normalize decimal separator to dot
-  const weight = matches[0].replace(',', '.');
+  // Pick the longest number (most likely to be the weight)
+  // For "1\n1626", this will pick "1626" instead of "1"
+  const longestNumber = wholeMatches.reduce((a, b) => a.length >= b.length ? a : b);
 
-  return { value: weight, confidence: 0.9 };
+  return { value: longestNumber, confidence: 0.9 };
 }
 
 /**
