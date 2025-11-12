@@ -11,6 +11,10 @@ const PORT = process.env.PORT || 3000;
 const PUBLIC_URL = process.env.PUBLIC_URL || `http://localhost:${PORT}`;
 const WEBHOOK_URL = process.env.WEBHOOK_URL;
 const WEBHOOK_API_KEY = process.env.WEBHOOK_API_KEY;
+const MAX_CONCURRENT_OCR = parseInt(process.env.MAX_CONCURRENT_OCR || '2', 10);
+
+// Track active OCR requests
+let activeOCRRequests = 0;
 
 // Middleware
 app.use(cors());
@@ -110,6 +114,22 @@ app.post('/api/upload', upload.single('image'), async (req: Request, res: Respon
       });
     }
 
+    // Check if we've reached the concurrent OCR limit
+    if (activeOCRRequests >= MAX_CONCURRENT_OCR) {
+      console.log(`OCR request blocked: ${activeOCRRequests}/${MAX_CONCURRENT_OCR} active requests`);
+      return res.status(429).json({
+        success: false,
+        error: 'Too many concurrent OCR requests',
+        message: `Server is processing ${activeOCRRequests} requests. Maximum allowed: ${MAX_CONCURRENT_OCR}. Please try again later.`,
+        activeRequests: activeOCRRequests,
+        maxConcurrent: MAX_CONCURRENT_OCR,
+      });
+    }
+
+    // Increment active request counter
+    activeOCRRequests++;
+    console.log(`OCR request started: ${activeOCRRequests}/${MAX_CONCURRENT_OCR} active requests`);
+
     const receivedAt = new Date().toISOString();
     console.log(`Processing uploaded file: ${req.file.filename}`);
 
@@ -118,8 +138,15 @@ app.post('/api/upload', upload.single('image'), async (req: Request, res: Respon
 
     console.log('Received metadata:', metadata);
 
-    // Perform OCR on the uploaded image
-    const result = await recognizeWeight(req.file.path);
+    let result;
+    try {
+      // Perform OCR on the uploaded image
+      result = await recognizeWeight(req.file.path);
+    } finally {
+      // Always decrement counter, even if OCR fails
+      activeOCRRequests--;
+      console.log(`OCR request completed: ${activeOCRRequests}/${MAX_CONCURRENT_OCR} active requests`);
+    }
 
     // Generate public URL for the image
     const imageUrl = `${PUBLIC_URL}/uploads/${req.file.filename}`;
@@ -198,6 +225,7 @@ app.listen(PORT, () => {
   console.log(`📁 Uploads directory: ${uploadsDir}`);
   console.log(`🔗 API endpoint: http://localhost:${PORT}/api/upload`);
   console.log(`🖼️  Image serving: ${PUBLIC_URL}/uploads/:filename`);
+  console.log(`⚡ Max concurrent OCR requests: ${MAX_CONCURRENT_OCR}`);
   if (WEBHOOK_URL) {
     console.log(`🔔 Webhook enabled: ${WEBHOOK_URL}`);
     if (WEBHOOK_API_KEY) {
