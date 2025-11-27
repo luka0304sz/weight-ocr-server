@@ -64,7 +64,7 @@ export async function recognizeWeight(
     // Configure Tesseract for better number recognition
     await worker.setParameters({
       tessedit_char_whitelist: "0123456789",
-      tessedit_pageseg_mode: PSM.SINGLE_BLOCK, // Assume single uniform block of text
+      tessedit_pageseg_mode: PSM.SINGLE_BLOCK,
     });
 
     const { data } = await worker.recognize(imagePath);
